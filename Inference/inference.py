@@ -2,8 +2,8 @@ import numpy as np
 from scipy import signal
 import pickle
 from joblib import load
-from sklearn.preprocessing import LabelEncoder, MinMaxScaler
-from tensorflow.keras.models import load_model
+# from sklearn.preprocessing import LabelEncoder, MinMaxScaler
+from tensorflow.keras.models import load_model  # type: ignore
 import pandas as pd
 
 
@@ -72,8 +72,7 @@ def load_models(xgb_pkl_path:str = "Inference/xgb_model.pkl", scaler_path:str='I
     return loaded_xgb, scaler, label_encoder, loaded_autoencoder
 
 
-def Inference(raw_input:np.ndarray):
-    loaded_xgb, scaler, label_encoder, loaded_autoencoder = load_models()
+def Inference(raw_input:np.ndarray,loaded_xgb, scaler, label_encoder, loaded_autoencoder):
     # Assuming X is your EEG data array, shape (trials, channels, samples)
     EEG_data = preprocess_eeg(raw_input)
 
@@ -97,28 +96,30 @@ def Inference(raw_input:np.ndarray):
     print(predictions)
     return predictions
 
-eegCSV = pd.read_csv("RecordedSessions/Canady/Canady-2024-05-26-12-48-45.csv")
-# eegCSV = eegCSV.loc[:,'EEG 1':'EEG 8']
-print(eegCSV['State'].unique())
-TIME_STAMP = 1200
-state_groups = eegCSV.groupby((eegCSV['State'] != eegCSV['State'].shift()).cumsum())
-included_states = ['Left']
-s =[]
-for _, data in state_groups:
-    state = data['State'].iloc[0]
-    if state in included_states:
-        eeg_data = np.transpose(data[['EEG 1', 'EEG 2', 'EEG 3', 'EEG 4', 'EEG 5', 'EEG 6', 'EEG 7', 'EEG 8']].values)[:,:TIME_STAMP]
+if __name__ == '__main__':
+    eegCSV = pd.read_csv("Inference/test_input/Antony-2024-03-30-11-41-14.csv")
+    # eegCSV = eegCSV.loc[:,'EEG 1':'EEG 8']
+    print(eegCSV['State'].unique())
+    TIME_STAMP = 1200
+    state_groups = eegCSV.groupby((eegCSV['State'] != eegCSV['State'].shift()).cumsum())
+    included_states = ['Left']
+    s =[]
+    for _, data in state_groups:
+        state = data['State'].iloc[0]
+        if state in included_states:
+            eeg_data = np.transpose(data[['EEG 1', 'EEG 2', 'EEG 3', 'EEG 4', 'EEG 5', 'EEG 6', 'EEG 7', 'EEG 8']].values)[:,:TIME_STAMP]
 
-        if eeg_data.shape[1] < TIME_STAMP:
-            pad_width = TIME_STAMP - eeg_data.shape[1]
-            eeg_data = np.pad(eeg_data, ((0, 0), (0, pad_width)), mode='constant', constant_values=0)
-        else:
-            eeg_data = eeg_data[:, :TIME_STAMP]
-        s.append(eeg_data)
-print(len(s), s[0].shape)
+            if eeg_data.shape[1] < TIME_STAMP:
+                pad_width = TIME_STAMP - eeg_data.shape[1]
+                eeg_data = np.pad(eeg_data, ((0, 0), (0, pad_width)), mode='constant', constant_values=0)
+            else:
+                eeg_data = eeg_data[:, :TIME_STAMP]
+            s.append(eeg_data)
+    print(len(s), s[0].shape)
 
-# eegNP = eegCSV.to_numpy()
-eegNP = np.array(s)
-print(eegNP.shape)
-# eegNP = eegNP.reshape(1,8,-1)
-Inference(eegNP)
+    # eegNP = eegCSV.to_numpy()
+    eegNP = np.array(s)
+    print(eegNP.shape)
+    # eegNP = eegNP.reshape(1,8,-1)
+    loaded_xgb, scaler, label_encoder, loaded_autoencoder = load_models()
+    Inference(eegNP,loaded_xgb, scaler, label_encoder, loaded_autoencoder)

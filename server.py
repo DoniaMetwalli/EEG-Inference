@@ -1,55 +1,50 @@
-# ## bring it all together
 
-# from fastapi import FastAPI, WebSocket
-# from ahk import AHK
-# import json
-# import base64
-# import numpy as np
-
-# app = FastAPI()
-# ahk = AHK()
-
-# def openGPT():
-#     ahk.run_script('Run https://chatgpt.com/') 
-    
-
-# @app.websocket("/ws")
-# async def websocket_endpoint(websocket: WebSocket):
-#     await websocket.accept()
-#     while True:
-#         numbers = await websocket.receive_text()
-#         await websocket.send_text("Message text was: success")
-        
-#         as_dict = json.loads(numbers)
-#         toByte = base64.b64decode(as_dict["base_64"])
-#         byteArray = np.frombuffer(toByte, dtype=as_dict["datatype"]).reshape(as_dict["shape"])
-#         resultByte = np.sum(byteArray)
-#         resultInt = int(resultByte)
-#         resultBytes = resultInt.to_bytes((resultInt.bit_length() + 7) // 8, byteorder="little")
-#         await websocket.send_bytes(resultBytes)
-        
-#         final_result = await websocket.receive_text()
-        
-#         if (final_result == "60"):
-#             print("GO")
-#             ahk.add_hotkey('#n', callback=openGPT)
-#             ahk.start_hotkeys() 
-#             ahk.block_forever()
-        
 from fastapi import FastAPI, WebSocket
-from ahk import AHK
+from fastapi.websockets import WebSocketState
+import numpy as np
 import asyncio
+from Inference import load_models, Inference
+from dataclasses import dataclass
+
+@dataclass(slots=True)
+class SharedList:
+    sl:list
 
 app = FastAPI()
-ahk = AHK()
+
+
+
+async def receiveThread(clientSocket:WebSocket, inputQueue:SharedList):
+    try:
+        while clientSocket.client_state == WebSocketState.CONNECTED:
+            inputQueue.sl.append(np.frombuffer(await clientSocket.receive_bytes(),dtype=np.float32).reshape(1,8,1))
+    except Exception as e:
+        print(e)
+        try:
+            await clientSocket.close()
+        except Exception:
+            pass
+
+async def inferenceThread(clientSocket:WebSocket,inputQueue:SharedList, batchSize: int = 1200):
+    loaded_xgb, scaler, label_encoder, loaded_autoencoder = load_models()
+    try:
+        while clientSocket.client_state == WebSocketState.CONNECTED:
+            if len(inputQueue.sl) >= batchSize:
+                batch = np.concatenate(inputQueue.sl[:batchSize],axis=2)
+                inputQueue.sl=inputQueue.sl[batchSize:]
+                yield Inference(batch, loaded_xgb, scaler, label_encoder, loaded_autoencoder)[0]
+            else:
+                await asyncio.sleep(0.010)
+    except Exception as e:
+        print(e)
+
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
-    
-    while True:
-        csvFile = await websocket.receive_text()
-        await websocket.send_text("Message text was: success")
-        
-# asyncio.run(main())
-        
+    inputQueue = SharedList(sl=[])
+    recvTask = asyncio.create_task(receiveThread(websocket,inputQueue))
+    async for out in inferenceThread(websocket,inputQueue):
+        await websocket.send_text(out)
+    await recvTask
